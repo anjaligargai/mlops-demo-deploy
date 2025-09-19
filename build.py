@@ -25,7 +25,7 @@ def get_approved_package(model_package_group_name):
             ModelPackageGroupName=model_package_group_name,
             ModelApprovalStatus="Approved",
             SortBy="CreationTime",
-            MaxResults=50,
+            MaxResults=100,
         )
         approved_packages = response["ModelPackageSummaryList"]
 
