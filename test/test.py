@@ -8,7 +8,7 @@ sm_client = boto3.client("sagemaker")
 runtime_client = boto3.client("sagemaker-runtime")
 
 # Environment variables from CodePipeline/CloudFormation
-MODEL_PACKAGE_GROUP_NAME = os.environ.get("MODEL_PACKAGE_GROUP_NAME", "anjali-mlops-demo")
+MODEL_PACKAGE_GROUP_NAME = os.environ.get("MODEL_PACKAGE_GROUP_NAME", "anjali-mlops-demo-p-lhs5oda8qnr1")
 ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "anjali-mlops-demo-staging")
 
 
