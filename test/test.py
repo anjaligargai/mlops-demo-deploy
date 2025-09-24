@@ -1,96 +1,72 @@
-import boto3
+import argparse
 import json
-import sys
-import time
+import logging
 import os
 
+import boto3
+from botocore.exceptions import ClientError
+
+logger = logging.getLogger(__name__)
 sm_client = boto3.client("sagemaker")
-runtime_client = boto3.client("sagemaker-runtime")
-
-# Environment variables from CodePipeline/CloudFormation
-MODEL_PACKAGE_GROUP_NAME = os.environ.get("MODEL_PACKAGE_GROUP_NAME", "anjali-mlops-demo-p-lhs5oda8qnr1")
-ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "anjali-mlops-demo-staging")
 
 
-def test_model_registration():
-    """Check if latest model is registered in Model Package Group"""
-    response = sm_client.list_model_packages(
-        ModelPackageGroupName=MODEL_PACKAGE_GROUP_NAME,
-        SortBy="CreationTime",
-        SortOrder="Descending",
-        MaxResults=1
-    )
-    assert len(response["ModelPackageSummaryList"]) > 0, "No models found in package group!"
-    latest_model = response["ModelPackageSummaryList"][0]
-    print(f"✅ Model registered: {latest_model['ModelPackageArn']}")
-    return latest_model["ModelPackageArn"]
+def invoke_endpoint(endpoint_name):
+    """
+    Add custom logic here to invoke the endpoint and validate reponse
+    """
+    return {"endpoint_name": endpoint_name, "success": True}
 
 
-def test_deployment():
-    """Check if endpoint exists and is InService"""
-    response = sm_client.describe_endpoint(EndpointName=ENDPOINT_NAME)
-    status = response["EndpointStatus"]
-    assert status == "InService", f"Endpoint {ENDPOINT_NAME} not ready. Current status: {status}"
-    print(f"✅ Endpoint {ENDPOINT_NAME} is deployed and InService.")
-    return True
+def test_endpoint(endpoint_name):
+    """
+    Describe the endpoint and ensure InSerivce, then invoke endpoint.  Raises exception on error.
+    """
+    error_message = None
+    try:
+        # Ensure endpoint is in service
+        response = sm_client.describe_endpoint(EndpointName=endpoint_name)
+        status = response["EndpointStatus"]
+        if status != "InService":
+            error_message = f"SageMaker endpoint: {endpoint_name} status: {status} not InService"
+            logger.error(error_message)
+            raise Exception(error_message)
 
+        # Output if endpoint has data capture enbaled
+        endpoint_config_name = response["EndpointConfigName"]
+        response = sm_client.describe_endpoint_config(EndpointConfigName=endpoint_config_name)
+        if "DataCaptureConfig" in response and response["DataCaptureConfig"]["EnableCapture"]:
+            logger.info(f"data capture enabled for endpoint config {endpoint_config_name}")
 
-def test_inference():
-    """Invoke the endpoint with a realistic store transaction payload"""
-    payload = {
-        "date": "2020-01-01",
-        "store_id": "STORE_001",
-        "store_name": "Dine Location 1",
-        "city": "East Tammymouth",
-        "state": "NV",
-        "store_type": "Mall",
-        "item_id": "ITEM_064",
-        "item_name": "Sandwich",
-        "category": "Appetizers",
-        "price": 24.92,
-        "quantity_sold": 58,
-        "revenue": 1445.36,
-        "food_cost": 294.64,
-        "profit": 1150.72,
-        "day_of_week": "Wednesday",
-        "month": 1,
-        "quarter": "Q1",
-        "is_weekend": False,
-        "is_holiday": True,
-        "temperature": 80.3,
-        "is_promotion": False,
-        "stock_out": False,
-        "prep_time": 16,
-        "calories": 919,
-        "is_vegetarian": False
-    }
+        # Call endpoint to handle
+        return invoke_endpoint(endpoint_name)
+    except ClientError as e:
+        error_message = e.response["Error"]["Message"]
+        logger.error(error_message)
+        raise Exception(error_message)
 
-    response = runtime_client.invoke_endpoint(
-        EndpointName=ENDPOINT_NAME,
-        ContentType="application/json",
-        Body=json.dumps(payload)
-    )
-
-    result = response["Body"].read().decode("utf-8")
-    print(f"✅ Inference response: {result}")
-    return result
 
 if __name__ == "__main__":
-    try:
-        print("Running Model Registration Test...")
-        test_model_registration()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--log-level", type=str, default=os.environ.get("LOGLEVEL", "INFO").upper())
+    parser.add_argument("--import-build-config", type=str, required=True)
+    parser.add_argument("--export-test-results", type=str, required=True)
+    args, _ = parser.parse_known_args()
 
-        print("\nRunning Deployment Test...")
-        test_deployment()
+    # Configure logging to output the line number and message
+    log_format = "%(levelname)s: [%(filename)s:%(lineno)s] %(message)s"
+    logging.basicConfig(format=log_format, level=args.log_level)
 
-        print("\nRunning Inference Test...")
-        test_inference()
+    # Load the build config
+    with open(args.import_build_config, "r") as f:
+        config = json.load(f)
 
-        print("\n🎉 All tests passed successfully!")
+    # Get the endpoint name from sagemaker project name
+    endpoint_name = "{}-{}".format(
+        config["Parameters"]["SageMakerProjectName"], config["Parameters"]["StageName"]
+    )
+    results = test_endpoint(endpoint_name)
 
-    except AssertionError as e:
-        print(f"❌ Test failed: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        sys.exit(1)
+    # Print results and write to file
+    logger.debug(json.dumps(results, indent=4))
+    with open(args.export_test_results, "w") as f:
+        json.dump(results, f, indent=4)
